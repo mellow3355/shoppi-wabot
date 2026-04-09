@@ -1,0 +1,21 @@
+{
+  "name": "shoppi-wabot",
+  "version": "0.1.0",
+  "description": "WhatsApp bot multi-tenant para Shoppi",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "firebase-admin": "^12.0.0",
+    "whatsapp-web.js": "^1.23.0",
+    "qrcode": "^1.5.3",
+    "@anthropic-ai/sdk": "^0.27.0",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
