@@ -116,6 +116,8 @@ async function startTenant(tenantId) {
     }),
     puppeteer: {
       headless: true,
+      protocolTimeout: 240000, // 4 min — WA Web tarda en cargar en Cloud Run
+      timeout: 180000,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -123,6 +125,7 @@ async function startTenant(tenantId) {
         "--disable-accelerated-2d-canvas",
         "--no-first-run",
         "--no-zygote",
+        "--single-process",
         "--disable-gpu",
       ],
     },
