@@ -116,8 +116,8 @@ async function startTenant(tenantId) {
     }),
     puppeteer: {
       headless: true,
-      protocolTimeout: 240000, // 4 min — WA Web tarda en cargar en Cloud Run
-      timeout: 180000,
+      protocolTimeout: 300000,
+      timeout: 240000,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -125,8 +125,8 @@ async function startTenant(tenantId) {
         "--disable-accelerated-2d-canvas",
         "--no-first-run",
         "--no-zygote",
-        "--single-process",
         "--disable-gpu",
+        "--disable-software-rasterizer",
       ],
     },
   });
@@ -213,10 +213,13 @@ async function startTenant(tenantId) {
   });
 
   inst.client = client;
-  client.initialize().catch(err => {
-    console.error(`[${tenantId}] init error:`, err.message);
-    inst.status = "error";
-  });
+  console.log(`[${tenantId}] llamando client.initialize()...`);
+  client.initialize()
+    .then(() => console.log(`[${tenantId}] initialize() resuelto`))
+    .catch(err => {
+      console.error(`[${tenantId}] init error:`, err.message, err.stack);
+      inst.status = "error";
+    });
 
   return inst;
 }
