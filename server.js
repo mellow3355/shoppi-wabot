@@ -1,33 +1,55 @@
 // API REST + boot del WA bot multi-tenant.
-// Endpoints (todos requieren X-Admin-Token salvo /health):
-//   POST /tenants/:id/start
-//   POST /tenants/:id/stop
-//   GET  /tenants/:id/status
-//   GET  /health
+// Auth: verifica Firebase ID token (Authorization: Bearer <idToken>) y chequea
+// que el user este mapeado a ese tenantId via userTenantMap (igual que admin.html).
 
 const express = require("express");
 const cors = require("cors");
 const { initializeApp } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
+const { getFirestore } = require("firebase-admin/firestore");
 const { startTenant, stopTenant, getStatus, bootAll } = require("./waManager");
 
 initializeApp();
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: true }));
 app.use(express.json());
 
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "changeme";
-
-function requireAdmin(req, res, next) {
-  if (req.headers["x-admin-token"] !== ADMIN_TOKEN) {
-    return res.status(401).json({ error: "unauthorized" });
+async function authMiddleware(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const m = authHeader.match(/^Bearer (.+)$/);
+    if (!m) return res.status(401).json({ error: "missing token" });
+    const decoded = await getAuth().verifyIdToken(m[1]);
+    req.user = decoded;
+    next();
+  } catch (e) {
+    res.status(401).json({ error: "invalid token: " + e.message });
   }
-  next();
+}
+
+// Verifica que el user este vinculado al tenantId solicitado.
+// userTenantMap/{email}.tenantId === req.params.id
+async function tenantAuthMiddleware(req, res, next) {
+  try {
+    const email = req.user.email;
+    if (!email) return res.status(403).json({ error: "user without email" });
+    const db = getFirestore();
+    const map = await db.collection("userTenantMap").doc(email).get();
+    if (!map.exists) return res.status(403).json({ error: "user not mapped to any tenant" });
+    const userTenantId = map.data().tenantId;
+    if (userTenantId !== req.params.id) {
+      return res.status(403).json({ error: "user not authorized for this tenant" });
+    }
+    next();
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 }
 
 app.get("/health", (req, res) => res.json({ ok: true, ts: Date.now() }));
 
-app.post("/tenants/:id/start", requireAdmin, async (req, res) => {
+app.post("/tenants/:id/start", authMiddleware, tenantAuthMiddleware, async (req, res) => {
   try {
     await startTenant(req.params.id);
     res.json({ ok: true });
@@ -36,12 +58,12 @@ app.post("/tenants/:id/start", requireAdmin, async (req, res) => {
   }
 });
 
-app.post("/tenants/:id/stop", requireAdmin, async (req, res) => {
+app.post("/tenants/:id/stop", authMiddleware, tenantAuthMiddleware, async (req, res) => {
   await stopTenant(req.params.id);
   res.json({ ok: true });
 });
 
-app.get("/tenants/:id/status", requireAdmin, (req, res) => {
+app.get("/tenants/:id/status", authMiddleware, tenantAuthMiddleware, (req, res) => {
   res.json(getStatus(req.params.id));
 });
 
