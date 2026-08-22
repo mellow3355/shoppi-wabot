@@ -56,12 +56,21 @@ node server.js
 
 ## Endpoints
 
-Todos requieren header `X-Admin-Token: <ADMIN_TOKEN>` salvo `/health`.
+`start`, `stop`, `status` requieren Firebase ID token del usuario + mapeo en `userTenantMap`.
+`send` requiere header `X-Admin-Token: <ADMIN_TOKEN>` (server-to-server desde Vercel `inbox.js`).
 
 - `GET /health`
 - `POST /tenants/:id/start` — inicializa/levanta el bot del tenant. Devuelve `{ok}`.
 - `POST /tenants/:id/stop` — desconecta y libera memoria.
 - `GET /tenants/:id/status` — `{status: 'qr'|'ready'|'starting'|'disconnected'|'stopped', qr: dataUrl?}`.
+- `POST /tenants/:id/send` — body `{to: "58424...", body: "hola"}`. Manda texto por WhatsApp y espeja en la bandeja CRM.
+
+## Relay a la bandeja CRM (shoppi.vip/whatsapp.html)
+
+Si están seteadas `KV_REST_API_URL` + `KV_REST_API_TOKEN`, cada mensaje entrante se escribe en el mismo Upstash Redis que usa `webhook.js` de la Meta Cloud API. Así la bandeja funciona igual, sin importar si el número es Cloud API o whatsapp-web.js. Envs opcionales:
+
+- `KV_REST_API_URL` / `KV_REST_API_TOKEN` (o `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`)
+- `WABOT_BUSINESS_NUMBER` — texto que se guarda como `numeroNegocio` en cada mensaje (informativo).
 
 ## Flujo del primer pareo
 

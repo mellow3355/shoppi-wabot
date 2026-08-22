@@ -9,6 +9,85 @@ const { generateReply, welcomeMessage } = require("./llm");
 
 const SESSIONS_DIR = process.env.SESSIONS_DIR || "/tmp/wa-sessions";
 
+// ── Relay a Upstash Redis (para la bandeja CRM en shoppi.vip/whatsapp.html) ──
+const REDIS_URL   = process.env.KV_REST_API_URL   || process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+const RELAY_ENABLED = !!(REDIS_URL && REDIS_TOKEN);
+
+async function redis(cmd) {
+  if (!RELAY_ENABLED) return null;
+  const r = await fetch(REDIS_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify(cmd),
+  });
+  const j = await r.json();
+  if (j.error) throw new Error("Redis: " + j.error);
+  return j.result;
+}
+
+function chatIdToPhone(chatId) {
+  return String(chatId).replace(/@.*$/, "").replace(/\D/g, "");
+}
+
+async function relayIncoming(msg, fromName) {
+  if (!RELAY_ENABLED) return;
+  try {
+    const phone = chatIdToPhone(msg.from);
+    if (!phone) return;
+    const ts = (msg.timestamp || Math.floor(Date.now() / 1000)) * 1000;
+    const tipo = msg.type === "chat" ? "text" : (msg.type || "text");
+    const texto = (msg.body || "").slice(0, 4000);
+    const stored = {
+      id: msg.id?._serialized || msg.id?.id || "in-" + Date.now(),
+      de: phone,
+      ts,
+      tipo,
+      direccion: "entrante",
+      texto,
+      nombre: fromName || "",
+      numeroNegocio: process.env.WABOT_BUSINESS_NUMBER || "",
+    };
+    await redis(["RPUSH", `wa:msgs:${phone}`, JSON.stringify(stored)]);
+    await redis(["LTRIM", `wa:msgs:${phone}`, -500, -1]);
+    await redis(["ZADD", "wa:convs", ts, phone]);
+    await redis(["HSET", `wa:conv:${phone}`,
+      "nombre", fromName || "",
+      "ultimo", texto ? texto.slice(0, 120) : "[" + tipo + "]",
+      "ts", String(ts),
+      "tipo", tipo]);
+    await redis(["HINCRBY", `wa:conv:${phone}`, "sinLeer", 1]);
+  } catch (e) {
+    console.error("relay incoming failed:", e.message);
+  }
+}
+
+async function relayOutgoing(phone, texto, id) {
+  if (!RELAY_ENABLED) return null;
+  try {
+    const ts = Date.now();
+    const stored = {
+      id: id || "out-" + ts,
+      de: phone,
+      ts,
+      tipo: "text",
+      direccion: "saliente",
+      texto,
+      estado: "enviado",
+    };
+    await redis(["RPUSH", `wa:msgs:${phone}`, JSON.stringify(stored)]);
+    await redis(["ZADD", "wa:convs", ts, phone]);
+    await redis(["HSET", `wa:conv:${phone}`,
+      "ultimo", "Tú: " + texto.slice(0, 110),
+      "ts", String(ts),
+      "tipo", "text"]);
+    return stored;
+  } catch (e) {
+    console.error("relay outgoing failed:", e.message);
+    return null;
+  }
+}
+
 // Map<tenantId, { client, status, qrDataUrl, tenant }>
 const instances = new Map();
 
@@ -164,15 +243,18 @@ async function startTenant(tenantId) {
       if (msg.from.endsWith("@g.us")) return;
       if (msg.from === "status@broadcast") return;
 
-      const fresh = await loadTenant(tenantId);
-      if (!fresh.enabled) return;
-
       const chatId = msg.from;
       const body = (msg.body || "").trim();
-      if (!body) return;
-
       const contact = await msg.getContact();
       const fromName = contact.pushname || contact.name || chatId;
+
+      // Relay a Upstash SIEMPRE (bandeja CRM en shoppi.vip/whatsapp.html).
+      // Corre antes del gate de wa.enabled para que el CRM funcione aunque el LLM esté apagado.
+      await relayIncoming(msg, fromName);
+
+      const fresh = await loadTenant(tenantId);
+      if (!fresh.enabled) return;
+      if (!body) return;
 
       await logIncoming(tenantId, chatId, fromName, body);
 
@@ -244,6 +326,23 @@ function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
+// Envío manual desde la bandeja CRM. Server-to-server (Vercel inbox.js → wabot).
+async function sendManual(tenantId, to, body) {
+  const inst = instances.get(tenantId);
+  if (!inst) throw new Error("tenant no está corriendo; llamá /start primero");
+  if (inst.status !== "ready") throw new Error("bot no está listo (estado: " + inst.status + ")");
+  const phone = String(to).replace(/\D/g, "");
+  if (!phone) throw new Error("número inválido");
+  const texto = String(body || "").trim();
+  if (!texto) throw new Error("texto vacío");
+
+  const chatId = phone + "@c.us";
+  const sent = await inst.client.sendMessage(chatId, texto);
+  const id = sent?.id?._serialized || sent?.id?.id || null;
+  const stored = await relayOutgoing(phone, texto, id);
+  return { ok: true, id, mensaje: stored };
+}
+
 // Boot — al arrancar el servicio, levanta todos los tenants con whatsapp.enabled = true
 async function bootAll() {
   const db = getFirestore();
@@ -261,4 +360,4 @@ async function bootAll() {
   }
 }
 
-module.exports = { startTenant, stopTenant, getStatus, bootAll };
+module.exports = { startTenant, stopTenant, getStatus, bootAll, sendManual };

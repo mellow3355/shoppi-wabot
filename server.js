@@ -7,7 +7,7 @@ const cors = require("cors");
 const { initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
 const { getFirestore } = require("firebase-admin/firestore");
-const { startTenant, stopTenant, getStatus, bootAll } = require("./waManager");
+const { startTenant, stopTenant, getStatus, bootAll, sendManual } = require("./waManager");
 
 initializeApp();
 
@@ -47,7 +47,27 @@ async function tenantAuthMiddleware(req, res, next) {
   }
 }
 
+// Auth server-to-server (Vercel inbox.js → wabot). Header: X-Admin-Token.
+function adminTokenMiddleware(req, res, next) {
+  const token = String(req.headers["x-admin-token"] || "").trim();
+  if (!process.env.ADMIN_TOKEN) return res.status(500).json({ error: "ADMIN_TOKEN no configurado" });
+  if (token !== process.env.ADMIN_TOKEN) return res.status(401).json({ error: "invalid admin token" });
+  next();
+}
+
 app.get("/health", (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+// Envío manual desde la bandeja CRM. Server-to-server.
+app.post("/tenants/:id/send", adminTokenMiddleware, async (req, res) => {
+  try {
+    const { to, body } = req.body || {};
+    if (!to || !body) return res.status(400).json({ error: "faltan campos to/body" });
+    const result = await sendManual(req.params.id, to, body);
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
 
 app.post("/tenants/:id/start", authMiddleware, tenantAuthMiddleware, async (req, res) => {
   try {
