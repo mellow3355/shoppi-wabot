@@ -193,8 +193,14 @@ async function startTenant(tenantId) {
       clientId: tenantId,
       dataPath: SESSIONS_DIR,
     }),
+    // authTimeoutMs default 0 (infinito) — subimos qrMaxRetries para dar mas margen.
+    qrMaxRetries: 5,
     puppeteer: {
       headless: true,
+      // executablePath explicito para no depender de que puppeteer resuelva el binario.
+      // El Dockerfile instala chromium en /usr/bin/chromium y setea la env, pero
+      // pasarlo aca elimina cualquier ambigüedad.
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
       protocolTimeout: 300000,
       timeout: 240000,
       args: [
@@ -206,6 +212,10 @@ async function startTenant(tenantId) {
         "--no-zygote",
         "--disable-gpu",
         "--disable-software-rasterizer",
+        // Cloud Run tiene /dev/shm de 64MB por default → forzar via /tmp evita
+        // que Chrome muera al cargar web.whatsapp.com.
+        "--disable-features=IsolateOrigins,site-per-process",
+        "--single-process",
       ],
     },
   });
